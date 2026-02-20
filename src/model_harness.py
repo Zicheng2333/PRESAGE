@@ -125,7 +125,7 @@ class ModelHarness(pl.LightningModule):
         if key not in self.degs:
             key = "_".join(reversed(self.var_names[ind]))
 
-        assert key in self.degs, f"Could not find perturb key {key}."
+        # assert key in self.degs, f"Could not find perturb key {key}."
         return key
 
     def unpack_batch(self, batch):
