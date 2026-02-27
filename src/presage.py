@@ -571,32 +571,33 @@ def read_and_embed(pathway_file, genes_to_keep, n_nmf_embeddings, config, datamo
     os.makedirs(cache_dir, exist_ok=True)
 
     coex_dfs = []
-    # compute node2vec on coperturbation effects on genes (transpose matrix)
-    emb = get_embeddings_from_training_gex(
-        datamodule,
-        cache_dir,
-        "transpose_matrix",
-        sub_config,
-        True,
-        config["dataset"] + "_" + split_path,
-    )
+    if config.get("use_training_gex_embeddings", True):
+        # compute node2vec on coperturbation effects on genes (transpose matrix)
+        emb = get_embeddings_from_training_gex(
+            datamodule,
+            cache_dir,
+            "transpose_matrix",
+            sub_config,
+            True,
+            config["dataset"] + "_" + split_path,
+        )
 
-    emb = emb.loc[emb.index.isin(genes_to_keep)]
-    emb = emb.loc[genes_to_keep, :]
-    coex_dfs.append(emb.values.reshape(emb.shape[0], emb.shape[1], 1))
+        emb = emb.loc[emb.index.isin(genes_to_keep)]
+        emb = emb.loc[genes_to_keep, :]
+        coex_dfs.append(emb.values.reshape(emb.shape[0], emb.shape[1], 1))
 
-    # compute node2vec on coexpression matrix
-    emb = get_embeddings_from_training_gex(
-        datamodule,
-        cache_dir,
-        "coexpression",
-        sub_config,
-        False,
-        config["dataset"] + "_" + split_path,
-    )
-    emb = emb.loc[emb.index.isin(genes_to_keep)]
-    emb = emb.loc[genes_to_keep, :]
-    coex_dfs.append(emb.values.reshape(emb.shape[0], emb.shape[1], 1))
+        # compute node2vec on coexpression matrix
+        emb = get_embeddings_from_training_gex(
+            datamodule,
+            cache_dir,
+            "coexpression",
+            sub_config,
+            False,
+            config["dataset"] + "_" + split_path,
+        )
+        emb = emb.loc[emb.index.isin(genes_to_keep)]
+        emb = emb.loc[genes_to_keep, :]
+        coex_dfs.append(emb.values.reshape(emb.shape[0], emb.shape[1], 1))
 
     pref = "WeightedDeepset." + pref + "." + str(n_neigh_prune)
 
@@ -706,6 +707,11 @@ def read_and_embed(pathway_file, genes_to_keep, n_nmf_embeddings, config, datamo
             pkl.dump(emb_tensor, f, protocol=pkl.HIGHEST_PROTOCOL)
 
         coex_dfs.append(emb_tensor)
+    if not coex_dfs:
+        raise ValueError(
+            "No gene embeddings were loaded. Set pathway_files to a file listing "
+            "embedding sources, or enable use_training_gex_embeddings."
+        )
     emb_tensor = np.concatenate(coex_dfs, -1)
 
     return emb_tensor
@@ -957,5 +963,4 @@ def read_sparse_dataframe(input_file):
     ).sparse.to_dense()
 
     return df
-
 

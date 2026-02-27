@@ -89,6 +89,13 @@ parser.add_argument("--model.pathway_weight_type", type=str, default="gat")
 parser.add_argument("--model.pool_nlayers", type=int, default=2)
 parser.add_argument("--model.softmax_temperature", type=float, default=0.15)
 parser.add_argument("--model.gat_weight", type=float, default=0.85)
+parser.add_argument(
+    "--model.use_training_gex_embeddings",
+    type=str2bool,
+    nargs="?",
+    const=True,
+    default=True,
+)
 
 parser.add_argument("--model.linear_coefficient_hidden_size", type=int, default=32)
 parser.add_argument("--model.linear_coefficient_nlayers", type=int, default=3)
