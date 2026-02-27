@@ -18,6 +18,7 @@ from pytorch_lightning.callbacks.early_stopping import EarlyStopping
 from presage_datamodule import ReploglePRESAGEDataModule
 from model_harness import ModelHarness
 from presage import PRESAGE
+import argparse
 
 """
 Datasets:
@@ -26,10 +27,25 @@ Datasets:
   replogle_rpe1_essential_unfiltered
   nadig_hepg2
   nadig_jurkat
+  
+Pathway Files:
+"None"
+"../sample_files/prior_files/sample.knowledge_experimental.txt"
+"/raid/yangpeng_lab/c12212609/PRESAGE/data/topic_embed/all_embed.txt"
 """
 
-dataset = "nadig_jurkat"
-seed = "seed_0"
+parser = argparse.ArgumentParser()
+parser.add_argument("--dataset", type=str, default="replogle_k562_gw")
+parser.add_argument("--n_nmf_embedding", type=int, default=60)
+parser.add_argument("--seed", type=str, default="seed_0")
+parser.add_argument("--pathway_files", type=str, default=None)
+parser.add_argument("--use_training_gex_embeddings", action="store_true")
+parser.add_argument("--eval_test", action="store_true")
+
+args = parser.parse_args()
+
+dataset = args.dataset
+seed = args.seed
 
 default_config_file = "../configs/defaults_config.json"
 singles_config_file = "../configs/singles_config.json"
@@ -54,10 +70,10 @@ singles_config = new_config
 config.update(singles_config)
 
 modify_config = {
-    "training.eval_test": False,
-    # "model.pathway_files": "../sample_files/prior_files/sample.knowledge_experimental.txt",
-    # "model.pathway_files": "None",
-    "model.pathway_files": "/raid/yangpeng_lab/c12212609/PRESAGE/data/topic_embed/all_embed.txt",
+    "training.eval_test": args.eval_test,
+    "model.pathway_files": args.pathway_files,
+    "model.n_nmf_embedding": args.n_nmf_embedding,
+    "model.use_training_gex_embeddings": args.use_training_gex_embeddings,
     "data.data_dir": "../data/",
 }
 
@@ -188,4 +204,3 @@ avg_predictions = avg_predictions.loc[
     :, datamodule.train_dataset.adata.var.measured_gene
 ]
 avg_predictions.to_csv(predictions_file)
-avg_predictions
