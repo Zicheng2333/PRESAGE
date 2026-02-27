@@ -1,15 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
-"""
-Datasets:
-  replogle_k562_gw
-  replogle_k562_essential_unfiltered
-  replogle_rpe1_essential_unfiltered
-  nadig_hepg2
-  nadig_jurkat
-"""
-
 import sys
 sys.path.append('../src/')  # Replace with your actual path
 from train import set_seed, parse_config, get_predictions
@@ -17,7 +8,6 @@ from train import set_seed, parse_config, get_predictions
 import json
 
 import datetime
-import os
 
 import pytorch_lightning as pl
 import torch
@@ -29,7 +19,16 @@ from presage_datamodule import ReploglePRESAGEDataModule
 from model_harness import ModelHarness
 from presage import PRESAGE
 
-dataset = "replogle_rpe1_essential_unfiltered"
+"""
+Datasets:
+  replogle_k562_gw
+  replogle_k562_essential_unfiltered
+  replogle_rpe1_essential_unfiltered
+  nadig_hepg2
+  nadig_jurkat
+"""
+
+dataset = "nadig_jurkat"
 seed = "seed_0"
 
 default_config_file = "../configs/defaults_config.json"
@@ -56,7 +55,9 @@ config.update(singles_config)
 
 modify_config = {
     "training.eval_test": False,
-    "model.pathway_files": "../sample_files/prior_files/sample.knowledge_experimental.txt",
+    # "model.pathway_files": "../sample_files/prior_files/sample.knowledge_experimental.txt",
+    # "model.pathway_files": "None",
+    "model.pathway_files": "/raid/yangpeng_lab/c12212609/PRESAGE/data/topic_embed/all_embed.txt",
     "data.data_dir": "../data/",
 }
 
@@ -128,7 +129,7 @@ logger = pl.loggers.CSVLogger(
 #     predictions_file = f"predictions_{dataset}.csv"
 
 print("default prediction file:", predictions_file)
-predictions_file = f"predictions_{dataset}.csv"
+predictions_file = f"predictions_all_{dataset}.csv"
 print("adjusted prediction file:", predictions_file)
 
 early_stop_callback = EarlyStopping(

@@ -1,6 +1,15 @@
 #!/usr/bin/env python3
 """Convert gene-embedding CSV (topics x genes) into PRESAGE .pkl format.
 
+python convert_gene_embedding_csv.py \
+  --input /raid/yangpeng_lab/c12212609/PRESAGE/data/topic_embed/pca_embed.csv \
+  --output /raid/yangpeng_lab/c12212609/PRESAGE/data/topic_embed/pca_embed.pkl
+
+
+python convert_gene_embedding_csv.py \
+  --input /raid/yangpeng_lab/c12212609/PRESAGE/data/topic_embed/state_embed.csv \
+  --output /raid/yangpeng_lab/c12212609/PRESAGE/data/topic_embed/state_embed.pkl
+
 Input CSV format (example):
     ,NOC2L,KLHL17,HES4,...
     topic_0,9.03e-05,1.12e-04,2.54e-03,...
