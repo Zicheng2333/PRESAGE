@@ -634,16 +634,19 @@ def read_and_embed(pathway_file, genes_to_keep, n_nmf_embeddings, config, datamo
     all_dfs = []
     if pathway_file != "None":
         with open(pathway_file, "r") as f_in:
-            gene_embedding_mat = pd.DataFrame(
-                np.zeros((len(genes_to_keep), n_nmf_embeddings))
-            )
-            gene_embedding_mat.index = genes_to_keep
-
-            weights_vec = pd.DataFrame(np.zeros((len(genes_to_keep), 1))).copy()
-            weights_vec.index = genes_to_keep
             for i, line in enumerate(f_in):
                 emb_source = line.rstrip()
                 print(emb_source)
+
+                # NOTE:
+                # Build one matrix per source so each source contributes one pathway
+                # channel independently. Reusing a shared matrix here makes channels
+                # cumulative/order-dependent and can silently overwrite previous
+                # sources for overlapping genes.
+                gene_embedding_mat = pd.DataFrame(
+                    np.zeros((len(genes_to_keep), n_nmf_embeddings))
+                )
+                gene_embedding_mat.index = genes_to_keep
 
                 # if extension is pkl then read embedding and compute PCA
                 if emb_source.split(".")[-1] == "pkl":
@@ -963,4 +966,3 @@ def read_sparse_dataframe(input_file):
     ).sparse.to_dense()
 
     return df
-
