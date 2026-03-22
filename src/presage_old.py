@@ -8,8 +8,8 @@ from sklearn.decomposition import PCA
 from sklearn.neighbors import NearestNeighbors
 from torch_geometric.nn.models import Node2Vec
 from sklearn.metrics.pairwise import cosine_similarity
-#from .baseline import MLP, MLPBaseline
-#from .pca import PCAWithTrainableDecoder
+# from .baseline import MLP, MLPBaseline
+# from .pca import PCAWithTrainableDecoder
 from sklearn.preprocessing import StandardScaler
 from scipy import sparse
 import scanpy as sc
@@ -22,10 +22,9 @@ import pytorch_lightning as pl
 from pytorch_lightning import Trainer
 from pytorch_lightning.callbacks import EarlyStopping
 
-
 from scipy.spatial.distance import pdist, squareform
 
-#from grn.buildGRNHelpers import grnBuilder
+# from grn.buildGRNHelpers import grnBuilder
 
 import torch.nn.functional as F
 import math
@@ -50,6 +49,7 @@ class PrepareInputs:
             self.datamodule, self.config
         )
 
+
 class MLP(nn.Module):
     def __init__(self, input_size, output_size, config):
         super().__init__()
@@ -66,17 +66,17 @@ class MLP(nn.Module):
             layers.append(linear(input_size, hidden_size))
             if batch_norm:
                 layers.append(nn.BatchNorm1d(hidden_size))
-            #layers.append(nn.ReLU())
+            # layers.append(nn.ReLU())
             layers.append(nn.LeakyReLU())
             input_size = hidden_size
-        layers.append(linear(hidden_size, output_size,bias=True))
+        layers.append(linear(hidden_size, output_size, bias=True))
         self.mlp = nn.Sequential(*layers)
         self.config = config
 
     def forward(self, x, cov=None):
-        return self.mlp(x)#, None
+        return self.mlp(x)  # , None
 
-    def compute_loss(self, pred, tgt,pred_clust=None,expr_clust=None):
+    def compute_loss(self, pred, tgt, pred_clust=None, expr_clust=None):
         return F.mse_loss(pred, tgt)
 
 
@@ -96,7 +96,6 @@ class PRESAGE(nn.Module):
 
         self.num_genes = output_dimension
         self.pca_dim = config["pca_dim"]
-
 
         # get gene embeddings
         self.gene_embeddings = PrepareInputs(datamodule, config)._prep_inputs()
@@ -157,16 +156,16 @@ class PRESAGE(nn.Module):
         # this is so we can use them in the combo
         singles_in_training_binary = self.datamodule.train_dataset.indmtx[
             np.sum(self.datamodule.train_dataset.indmtx, axis=1) == 1
-        ]
+            ]
 
         if self.datamodule.X_train_pca is not None:
             singles_in_training = self.datamodule.X_train_pca[
                 np.sum(self.datamodule.train_dataset.indmtx, axis=1) == 1
-            ]
+                ]
         else:
             singles_in_training = self.datamodule.train_dataset.X[
                 np.sum(self.datamodule.train_dataset.indmtx, axis=1) == 1
-            ]
+                ]
 
         self.single_inds_in_training_data = {}
         locs = np.where(singles_in_training_binary)
@@ -188,13 +187,12 @@ class PRESAGE(nn.Module):
         emb_h = self.activation(emb_h)
         emb_h_temp = emb_h
 
-
         self.emb_h = emb_h
 
         # pool to latent space uses the Pool cass
         emb_h_final = self.pool(
             emb_h, locs_combos, mask
-        ) 
+        )
 
         # pool is nested here
         if hasattr(self.pool.pool, "p_weight_vec"):
@@ -208,10 +206,9 @@ class PRESAGE(nn.Module):
 
         # transformation to output dimensions uses ItemNet class
         out = self.item_net(emb_h)
-        
+
         if self.pca_dim is not None:
             out = self.pca.inverse_transform(out)
-
 
         return out
 
@@ -272,6 +269,7 @@ class ItemMLP(nn.Module):
     def forward(self, tensor):
         return self.item_net(tensor)
 
+
 class GeneEmbeddingTransformation(nn.Module):
     def __init__(self, gene_embeddings, config, transformation_type):
         super(GeneEmbeddingTransformation, self).__init__()
@@ -297,7 +295,7 @@ class GeneEmbeddingTransformation(nn.Module):
 
 class PathwayMLP(nn.Module):
     def __init__(
-        self, in_dim, out_dim, hidden_dim, n_layers, batch_norm, n_pathways, config
+            self, in_dim, out_dim, hidden_dim, n_layers, batch_norm, n_pathways, config
     ):
         super(PathwayMLP, self).__init__()
 
@@ -364,8 +362,8 @@ class Pool(nn.Module):
         )
         # print("pool type", config["pathway_weight_type"])
         if np.isin(
-            config["pathway_weight_type"],
-            ["grouplasso", "grouplassodynamic", "grouplasso_top_k"],
+                config["pathway_weight_type"],
+                ["grouplasso", "grouplassodynamic", "grouplasso_top_k"],
         ):
             self.grouplasso = True
             # print("grouplasso true")
@@ -380,12 +378,12 @@ class Pool(nn.Module):
             # print("after pool dimension", self.pool(tensor).shape)
             return self.pool(tensor, mask)
 
+
 class MeanPool(nn.Module):
     def __init__(self, n_pathways, config):
         super(MeanPool, self).__init__()
 
     def forward(self, tensor):
-
         return torch.mean(tensor, dim=-1)
 
 
@@ -408,7 +406,6 @@ class LearnableWeightPool(nn.Module):
         return torch.sum(h, dim=-1)
 
 
-
 class GATPool(nn.Module):
     def __init__(self, n_pathways, config):
         super(GATPool, self).__init__()
@@ -422,19 +419,18 @@ class GATPool(nn.Module):
         ).to(self._device)
 
         eps = 1e-3
-        
+
         self.gatconv = GATConv(
             config["item_hidden_size"], config["item_hidden_size"], 5, concat=False,
         )
 
-        #self.gatconv_list = nn.ModuleList([
+        # self.gatconv_list = nn.ModuleList([
         #    GATv2Conv(
         #    config["item_hidden_size"], config["item_hidden_size"], 5, concat=False,
         #    ) for _ in range(self.nlayers)
-        #])
+        # ])
         self.activation = nn.LeakyReLU()
 
-        
         self.pathway_weight_vector = nn.Parameter(torch.randn(1, n_pathways) * eps)
         self.pooled_vec = nn.Parameter(torch.randn(1, config['item_hidden_size']) * eps)
         self.temperature = config["softmax_temperature"]
@@ -468,19 +464,19 @@ class GATPool(nn.Module):
 
         pooled_vec = self.pooled_vec.repeat(tensor.shape[0], 1)
         pooled_vec = pooled_vec.unsqueeze(-1)
-        
-        #pooled_vec = torch.zeros((tensor.shape[0], tensor.shape[1], 1)).to(self._device)
+
+        # pooled_vec = torch.zeros((tensor.shape[0], tensor.shape[1], 1)).to(self._device)
         tensor = torch.concat([tensor, pooled_vec], dim=-1)
 
         self.attention_weights = []
         for l in range(self.nlayers):
             resulting_tensor = []
             for b in range(tensor.shape[0]):
-                #temp, attention_weight = self.gatconv_list[l](
+                # temp, attention_weight = self.gatconv_list[l](
                 temp, attention_weight = self.gatconv(
                     tensor[b, :, :].T, self.edge_index, return_attention_weights=True
                 )
-                
+
                 temp = temp.T
                 resulting_tensor.append(temp.unsqueeze(0))
 
@@ -488,14 +484,14 @@ class GATPool(nn.Module):
                 if l == 0:
                     attention_weight = attention_weight[1]
                     attention_weight = attention_weight[
-                        : attention_weight.shape[0] // 2, :
-                    ]
+                                       : attention_weight.shape[0] // 2, :
+                                       ]
 
-                    attention_weight = torch.mean(attention_weight, dim=1)#.unsqueeze(-1)
+                    attention_weight = torch.mean(attention_weight, dim=1)  # .unsqueeze(-1)
                     attention_weight = attention_weight / torch.sum(attention_weight)
-                    
-                    #attention_weight = torch.mean(attention_weight, dim=1).unsqueeze(-1)
-                    
+
+                    # attention_weight = torch.mean(attention_weight, dim=1).unsqueeze(-1)
+
                     self.attention_weights.append(attention_weight.unsqueeze(0))
 
             tensor = torch.concat(resulting_tensor, dim=0)
@@ -505,7 +501,7 @@ class GATPool(nn.Module):
 
         # return tensor[:, :, -1]
         return (tensor[:, :, -1] * self.gat_weight) + (
-            tensor_skip * (1 - self.gat_weight)
+                tensor_skip * (1 - self.gat_weight)
         )
 
 
@@ -533,15 +529,15 @@ def read_and_embed(pathway_file, genes_to_keep, n_nmf_embeddings, config, datamo
     split_path = datamodule.split_path.split("/")[-1].split(".json")[0]
 
     pref = (
-        pathway_file.split("/")[-1].split(".txt")[0]
-        + "_"
-        + str(n_nmf_embeddings)
-        + "_"
-        + config["dim_red_alg"]
-        + "_"
-        + config["source"]
-        + "_"
-        + config["dataset"]
+            pathway_file.split("/")[-1].split(".txt")[0]
+            + "_"
+            + str(n_nmf_embeddings)
+            + "_"
+            + config["dim_red_alg"]
+            + "_"
+            + config["source"]
+            + "_"
+            + config["dataset"]
     )
 
     # if config['dim_red_alg'] == "Node2Vec":
@@ -635,19 +631,17 @@ def read_and_embed(pathway_file, genes_to_keep, n_nmf_embeddings, config, datamo
     # TODO 在这里做过更改
     if pathway_file != "None":
         with open(pathway_file, "r") as f_in:
+            gene_embedding_mat = pd.DataFrame(
+                np.zeros((len(genes_to_keep), n_nmf_embeddings))
+            )
+            gene_embedding_mat.index = genes_to_keep
+
+            weights_vec = pd.DataFrame(np.zeros((len(genes_to_keep), 1))).copy()
+            weights_vec.index = genes_to_keep
+
             for i, line in enumerate(f_in):
                 emb_source = line.rstrip()
                 print(emb_source)
-
-                # NOTE:
-                # Build one matrix per source so each source contributes one pathway
-                # channel independently. Reusing a shared matrix here makes channels
-                # cumulative/order-dependent and can silently overwrite previous
-                # sources for overlapping genes.
-                gene_embedding_mat = pd.DataFrame(
-                    np.zeros((len(genes_to_keep), n_nmf_embeddings))
-                )
-                gene_embedding_mat.index = genes_to_keep
 
                 # if extension is pkl then read embedding and compute PCA
                 if emb_source.split(".")[-1] == "pkl":
@@ -660,9 +654,9 @@ def read_and_embed(pathway_file, genes_to_keep, n_nmf_embeddings, config, datamo
                     df = df.loc[:, np.var(df, axis=0) != 0]
                     n_emb = min(df.shape[1] - 1, n_nmf_embeddings)
                     df.loc[:, :] = (
-                        df.values
-                        + np.random.randn(df.shape[0], df.shape[1]).astype(np.float32)
-                        * 1e-6
+                            df.values
+                            + np.random.randn(df.shape[0], df.shape[1]).astype(np.float32)
+                            * 1e-6
                     )
                     df.loc[:, :] = df.values - np.mean(df.values, axis=0, keepdims=True)
                     df.loc[:, :] = df.values / np.std(df.values, axis=0, keepdims=True)
@@ -734,7 +728,7 @@ def process_kg(df_in, c_dir, f_in, sub_config):
 
 
 def get_embeddings_from_training_gex(
-    datamodule, cache_dir, emb_source, config, do_coexpression, dataset_split
+        datamodule, cache_dir, emb_source, config, do_coexpression, dataset_split
 ):
     """
     using training data and the relationship between perturbations and genes to get
@@ -865,16 +859,16 @@ def node_2_vec(df_in, c_dir, f_in, node2vec_config):
 
 class GraphEmbedding(pl.LightningModule):
     def __init__(
-        self,
-        df_in,
-        n_emb,
-        walk_length,
-        context_size,
-        walks_per_node,
-        neg_samples,
-        node2vec_p,
-        node2vec_q,
-        batch_size,
+            self,
+            df_in,
+            n_emb,
+            walk_length,
+            context_size,
+            walks_per_node,
+            neg_samples,
+            node2vec_p,
+            node2vec_q,
+            batch_size,
     ):
         super(GraphEmbedding, self).__init__()
 

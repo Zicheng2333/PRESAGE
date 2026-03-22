@@ -31,7 +31,7 @@ Datasets:
 Pathway Files:
 "None"
 "../sample_files/prior_files/sample.knowledge_experimental.txt"
-"/raid/yangpeng_lab/c12212609/PRESAGE/data/topic_embed/all_embed.txt"
+"/raid/yangpeng_lab/c12212609/PRESAGE/data/topic_embed/*.txt"
 """
 
 parser = argparse.ArgumentParser()
@@ -41,6 +41,7 @@ parser.add_argument("--seed", type=str, default="seed_0")
 parser.add_argument("--pathway_files", type=str, default=None)
 parser.add_argument("--use_training_gex_embeddings", action="store_true")
 parser.add_argument("--eval_test", action="store_true")
+parser.add_argument("--use_old", action="store_true")
 
 args = parser.parse_args()
 
@@ -115,13 +116,24 @@ model_config['pca_dim'] = None
 model_config['source'] = 'temp'
 model_config['learnable_gene_embedding'] = False
 
-module = PRESAGE(
+if args.use_old:
+    from presage_old import PRESAGE
+    module = PRESAGE(
     model_config,
     datamodule,
     datamodule.pert_covariates.shape[1],
     datamodule.n_genes,
     # latent_dim or datamodule.n_genes,
-)
+    )
+else:
+    from presage import PRESAGE
+    module = PRESAGE(
+        model_config,
+        datamodule,
+        datamodule.pert_covariates.shape[1],
+        datamodule.n_genes,
+        # latent_dim or datamodule.n_genes,
+    )
 
 if hasattr(module, "custom_init"):
     module.custom_init()
