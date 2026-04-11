@@ -166,6 +166,7 @@ def bootstrap_metric_summary(per_pert_df, n_bootstrap=1000, seed=42, chunk_size=
 parser = argparse.ArgumentParser()
 parser.add_argument("--dataset", type=str, default="replogle_k562_gw")
 parser.add_argument("--n_nmf_embedding", type=int, default=60)
+parser.add_argument("--patience", type=int, default=10)
 parser.add_argument("--seed", type=str, default="seed_0")
 parser.add_argument("--pathway_files", type=str, default=None)
 parser.add_argument("--use_training_gex_embeddings", action="store_true")
@@ -189,6 +190,10 @@ parser.add_argument(
     default=128,
     help="Chunk size for vectorized bootstrap sampling.",
 )
+parser.add_argument("--tag", type=str, default=None)
+
+parser.add_argument("--batch_size", type=int, default=None)
+parser.add_argument("--lr", type=float, default=None)
 
 args = parser.parse_args()
 
@@ -217,12 +222,24 @@ for key, value in singles_config.items():
 singles_config = new_config
 config.update(singles_config)
 
-modify_config = {
+if args.batch_size is not None:
+    modify_config = {
     "training.eval_test": args.eval_test,
     "model.pathway_files": args.pathway_files,
     "model.n_nmf_embedding": args.n_nmf_embedding,
     "model.use_training_gex_embeddings": args.use_training_gex_embeddings,
     "data.data_dir": "../data/",
+    "data.batch_size": args.batch_size,
+    "model.lr": args.lr 
+}
+else:
+    modify_config = {
+    "training.eval_test": args.eval_test,
+    "model.pathway_files": args.pathway_files,
+    "model.n_nmf_embedding": args.n_nmf_embedding,
+    "model.use_training_gex_embeddings": args.use_training_gex_embeddings,
+    "data.data_dir": "../data/",
+    #"model.lr": args.lr 
 }
 
 config.update(modify_config)
@@ -293,18 +310,18 @@ print("model initialization complete.")
 # run trainer
 logger = pl.loggers.CSVLogger(
     save_dir="./logs",
-    name=dataset,
-    version=seed.split("/")[-1].split(".json")[0],
+    name=dataset+args.tag,
+    version=seed.split('/')[-1].split('.json')[0]
 )
 
 print("default prediction file:", predictions_file)
-predictions_file = f"predictions_all_{dataset}.csv"
+predictions_file = f"./logs/{dataset+args.tag}/predictions_all_{dataset}.csv"
 print("adjusted prediction file:", predictions_file)
 
 early_stop_callback = EarlyStopping(
     monitor="val_loss",
     min_delta=1e-6,
-    patience=10,
+    patience=args.patience,
     verbose=True,
     mode="min",
 )
