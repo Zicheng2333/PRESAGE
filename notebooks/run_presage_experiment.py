@@ -165,7 +165,7 @@ def bootstrap_metric_summary(per_pert_df, n_bootstrap=1000, seed=42, chunk_size=
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--dataset", type=str, default="replogle_k562_gw")
-parser.add_argument("--n_nmf_embedding", type=int, default=60)
+parser.add_argument("--n_nmf_embedding", type=int, default=128)
 parser.add_argument("--patience", type=int, default=10)
 parser.add_argument("--seed", type=str, default="seed_0")
 parser.add_argument("--pathway_files", type=str, default=None)
