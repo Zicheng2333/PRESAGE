@@ -53,6 +53,8 @@ class ModelHarness(pl.LightningModule):
         self.validation_step_outputs = []
         self.test_step_outputs = []
         self.train_step_outputs = []
+        self.test_eval_results = {}
+        self.test_single_eval_results = {}
         self.test_set_keys = getattr(datamodule, "test_set_keys", [""])
         self.encoder = encoder
         self.decoder = decoder
@@ -246,6 +248,8 @@ class ModelHarness(pl.LightningModule):
 
     def on_test_epoch_end(self):
         src, tgt, pred = defaultdict(list), defaultdict(list), defaultdict(list)
+        self.test_eval_results = {}
+        self.test_single_eval_results = {}
         for x in self.test_step_outputs:
             src[x["dl_idx"]].append(x["src"].cpu())
             tgt[x["dl_idx"]].append(x["tgt"].cpu())
@@ -276,12 +280,12 @@ class ModelHarness(pl.LightningModule):
                 # mean_preds[np.isnan(mean_preds)] = 0
 
                 if self.do_test_eval:
-                    self.log_dict(
-                        prepend_to_keys(
-                            current_test_set,
-                            self.evaluator(keys, mean_tgts, mean_preds, True),
-                        )
+                    eval_dict = self.evaluator(keys, mean_tgts, mean_preds, True)
+                    self.test_eval_results[current_test_set] = dict(eval_dict)
+                    self.test_single_eval_results[current_test_set] = dict(
+                        self.evaluator.all_single_evals
                     )
+                    self.log_dict(prepend_to_keys(current_test_set, eval_dict))
                     if hasattr(self, "second_evaluator"):
                         print("Doing non-linear DEG eval")
                         if current_test_set != "unseen_single":
@@ -294,12 +298,12 @@ class ModelHarness(pl.LightningModule):
                                 )
                             )
                 else:
-                    self.log_dict(
-                        prepend_to_keys(
-                            current_test_set,
-                            self.evaluator(keys, mean_tgts, mean_preds, False),
-                        )
+                    eval_dict = self.evaluator(keys, mean_tgts, mean_preds, False)
+                    self.test_eval_results[current_test_set] = dict(eval_dict)
+                    self.test_single_eval_results[current_test_set] = dict(
+                        self.evaluator.all_single_evals
                     )
+                    self.log_dict(prepend_to_keys(current_test_set, eval_dict))
             self.test_step_outputs.clear()
 
     def predict_step(self, batch, batch_idx, dataloader_idx=0):
