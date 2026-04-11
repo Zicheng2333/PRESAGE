@@ -1548,6 +1548,7 @@ class Evaluator:
 
             self.eval_suite(train=True)
             evals = self.eval_suite.evals
+            self.each_perturbation_eval.update(self.eval_suite.each_perturbation_eval)
 
         return evals
 
