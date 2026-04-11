@@ -5,6 +5,8 @@ import argparse
 import datetime
 import json
 import sys
+from copy import deepcopy
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -33,6 +35,32 @@ Pathway Files:
 "../sample_files/prior_files/sample.knowledge_experimental.txt"
 "/raid/yangpeng_lab/c12212609/PRESAGE/data/topic_embed/*.txt"
 """
+
+
+def make_experiment_dir(root: Path, exp_time: str) -> Path:
+    run_dir = root / exp_time
+    suffix = 1
+    while run_dir.exists():
+        run_dir = root / f"{exp_time}_{suffix:02d}"
+        suffix += 1
+    run_dir.mkdir(parents=True, exist_ok=False)
+    return run_dir
+
+
+def _to_jsonable(x):
+    if isinstance(x, dict):
+        return {str(k): _to_jsonable(v) for k, v in x.items()}
+    if isinstance(x, (list, tuple)):
+        return [_to_jsonable(v) for v in x]
+    if isinstance(x, Path):
+        return str(x)
+    if isinstance(x, torch.Tensor):
+        if x.numel() == 1:
+            return float(x.detach().cpu().item())
+        return x.detach().cpu().tolist()
+    if isinstance(x, np.generic):
+        return x.item()
+    return x
 
 
 def _to_python_scalar(x):
@@ -194,11 +222,17 @@ parser.add_argument("--tag", type=str, default=None)
 
 parser.add_argument("--batch_size", type=int, default=None)
 parser.add_argument("--lr", type=float, default=None)
+parser.add_argument("--output_root", type=str, default="./experiment_runs")
 
 args = parser.parse_args()
 
 dataset = args.dataset
 seed = args.seed
+run_tag = args.tag or ""
+run_name = f"{dataset}{run_tag}" if run_tag else dataset
+experiment_time = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+run_dir = make_experiment_dir(Path(args.output_root), exp_time=experiment_time)
+print("experiment_dir:", run_dir)
 
 default_config_file = "../configs/defaults_config.json"
 singles_config_file = "../configs/singles_config.json"
@@ -245,6 +279,18 @@ else:
 config.update(modify_config)
 config = parse_config(config)
 
+config["data"]["dataset"] = dataset
+config["data"]["seed"] = f"../splits/{dataset}_random_splits/{seed}.json"
+
+config_used = deepcopy(config)
+config_used["cli_args"] = vars(args)
+config_used["experiment"] = {
+    "time": experiment_time,
+    "run_dir": str(run_dir),
+}
+with open(run_dir / "config_used.json", "w") as f:
+    json.dump(_to_jsonable(config_used), f, indent=2)
+
 set_seed(config["training"].pop("seed", None))
 
 offline = config["training"].pop("offline", False)
@@ -252,9 +298,6 @@ do_test_eval = config["training"].pop("eval_test", True)
 predictions_file = config["training"].pop("predictions_file", None)
 embedding_pref = config["training"].pop("embedding_file", None)
 attention_file = config["training"].pop("attention_file", None)
-
-config["data"]["dataset"] = dataset
-config["data"]["seed"] = f"../splits/{dataset}_random_splits/{seed}.json"
 
 seed = config["data"].pop("seed")
 datamodule = ReploglePRESAGEDataModule.from_config(config["data"])
@@ -309,13 +352,13 @@ print("model initialization complete.")
 
 # run trainer
 logger = pl.loggers.CSVLogger(
-    save_dir="./logs",
-    name=dataset+args.tag,
+    save_dir=str(run_dir / "logs"),
+    name=run_name,
     version=seed.split('/')[-1].split('.json')[0]
 )
 
 print("default prediction file:", predictions_file)
-predictions_file = f"./logs/{dataset+args.tag}/predictions_all_{dataset}.csv"
+predictions_file = run_dir / f"predictions_all_{dataset}.csv"
 print("adjusted prediction file:", predictions_file)
 
 early_stop_callback = EarlyStopping(
@@ -326,12 +369,11 @@ early_stop_callback = EarlyStopping(
     mode="min",
 )
 
-now = datetime.datetime.now()
-now_str = now.strftime("%Y-%m-%d-%H-%M-%S")
+now_str = experiment_time
 
 checkpoint_callback = ModelCheckpoint(
     monitor="val_loss",
-    dirpath="./saved_models",
+    dirpath=str(run_dir / "saved_models"),
     filename=f"my_model-{dataset}-{seed.split('/')[-1].split('.json')[0]}-{now_str}-{{epoch:02d}}-{{val_loss:.2f}}",
     save_top_k=1,
     mode="min",
@@ -359,7 +401,7 @@ lightning_module.load_state_dict(checkpoint["state_dict"])
 
 # log final eval metrics
 test_output = trainer.test(lightning_module, datamodule=datamodule)
-test_metrics_file = f"test_metrics_{dataset}.json"
+test_metrics_file = run_dir / f"test_metrics_{dataset}.json"
 with open(test_metrics_file, "w") as f:
     json.dump(_convert_test_output_for_json(test_output), f, indent=2)
 print("saved test metrics:", test_metrics_file)
@@ -375,8 +417,8 @@ if not single_eval_by_set:
         single_eval_by_set = {}
 
 per_pert_df = extract_per_perturbation_metrics(single_eval_by_set)
-per_pert_file = f"per_perturbation_metrics_{dataset}.csv"
-bootstrap_file = f"bootstrap_summary_{dataset}.csv"
+per_pert_file = run_dir / f"per_perturbation_metrics_{dataset}.csv"
+bootstrap_file = run_dir / f"bootstrap_summary_{dataset}.csv"
 
 if per_pert_df.empty:
     print("[WARN] No per-perturbation scalar metrics found, skip bootstrap summary.")
