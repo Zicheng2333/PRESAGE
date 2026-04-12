@@ -157,6 +157,7 @@ def bootstrap_metric_summary(per_pert_df, n_bootstrap=1000, seed=42, chunk_size=
         c for c in per_pert_df.columns if c not in {"test_set", "perturbation"}
     ]
     rng = np.random.default_rng(seed)
+    missing_norm_warnings = set()
 
     rows = []
     for test_set, df_one_set in per_pert_df.groupby("test_set", sort=False):
@@ -164,11 +165,24 @@ def bootstrap_metric_summary(per_pert_df, n_bootstrap=1000, seed=42, chunk_size=
             if metric_name.startswith("mse_union_"):
                 suffix = metric_name[len("mse_union_") :]
                 norm_col = f"norm_union_{suffix}"
+                is_mse_metric = True
             elif metric_name.startswith("mse_"):
                 suffix = metric_name[len("mse_") :]
                 norm_col = f"norm_{suffix}"
+                is_mse_metric = True
             else:
                 norm_col = None
+                is_mse_metric = False
+
+            if is_mse_metric and (norm_col not in df_one_set.columns):
+                warn_key = (str(test_set), metric_name, norm_col)
+                if warn_key not in missing_norm_warnings:
+                    print(
+                        f"[WARN] Skip metric {metric_name} in set {test_set}: "
+                        f"missing required normalization column {norm_col}."
+                    )
+                    missing_norm_warnings.add(warn_key)
+                continue
 
             if norm_col is not None and norm_col in df_one_set.columns:
                 numerators = df_one_set[metric_name].to_numpy(dtype=np.float64, copy=True)

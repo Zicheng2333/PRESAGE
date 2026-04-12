@@ -454,14 +454,17 @@ class EvaluationSuite:
         for tgt, pred in zip(self.ranked_truth, self.ranked_pred):
             # saving single perturbations
             mse_added = mean_squared_error(tgt, pred)
+            norm_added = mean_squared_error(tgt, np.zeros_like(tgt))
 
             p = self.perts_order[counter]
             if p not in self.each_perturbation_eval:
                 self.each_perturbation_eval[p] = {}
             self.each_perturbation_eval[p][f"mse_{self.current_k}"] = mse_added
+            # needed for correctly reconstructing normalized MSE in downstream bootstrap
+            self.each_perturbation_eval[p][f"norm_{self.current_k}"] = norm_added
 
             mse += mse_added
-            norm += mean_squared_error(tgt, np.zeros_like(tgt))
+            norm += norm_added
             counter += 1
         return mse / norm
 
@@ -471,13 +474,16 @@ class EvaluationSuite:
         for tgt, pred in zip(self.ranked_truth_union, self.ranked_pred_union):
             # saving single perturbations
             mse_added = mean_squared_error(tgt, pred)
+            norm_added = mean_squared_error(tgt, np.zeros_like(tgt))
 
             mse += mse_added
-            norm += mean_squared_error(tgt, np.zeros_like(tgt))
+            norm += norm_added
             p = self.perts_order_union[counter]
             if p not in self.each_perturbation_eval:
                 self.each_perturbation_eval[p] = {}
             self.each_perturbation_eval[p][f"mse_union_{self.current_k}"] = mse_added
+            # needed for correctly reconstructing normalized MSE in downstream bootstrap
+            self.each_perturbation_eval[p][f"norm_union_{self.current_k}"] = norm_added
             counter += 1
         return mse / norm
 
