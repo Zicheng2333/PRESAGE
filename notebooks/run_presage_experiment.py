@@ -133,6 +133,25 @@ def bootstrap_sample_means(values, n_bootstrap, rng, chunk_size=128):
     return out
 
 
+def bootstrap_ratio_of_sums(numerators, denominators, n_bootstrap, rng, chunk_size=128):
+    numerators = np.asarray(numerators, dtype=np.float64)
+    denominators = np.asarray(denominators, dtype=np.float64)
+    n = int(numerators.shape[0])
+    if n == 0:
+        return np.array([], dtype=np.float64)
+
+    out = np.empty(n_bootstrap, dtype=np.float64)
+    done = 0
+    while done < n_bootstrap:
+        b = min(chunk_size, n_bootstrap - done)
+        sample_idx = rng.integers(0, n, size=(b, n), dtype=np.int64)
+        num_bs = numerators[sample_idx].sum(axis=1)
+        den_bs = denominators[sample_idx].sum(axis=1)
+        out[done : done + b] = num_bs / np.clip(den_bs, 1e-12, None)
+        done += b
+    return out
+
+
 def bootstrap_metric_summary(per_pert_df, n_bootstrap=1000, seed=42, chunk_size=128):
     metric_cols = [
         c for c in per_pert_df.columns if c not in {"test_set", "perturbation"}
@@ -142,25 +161,66 @@ def bootstrap_metric_summary(per_pert_df, n_bootstrap=1000, seed=42, chunk_size=
     rows = []
     for test_set, df_one_set in per_pert_df.groupby("test_set", sort=False):
         for metric_name in metric_cols:
-            values = df_one_set[metric_name].to_numpy(dtype=np.float64, copy=True)
-            values = values[np.isfinite(values)]
-            n_perts = int(values.shape[0])
-            if n_perts == 0:
-                continue
-
-            point_mean = float(values.mean())
-            if n_bootstrap > 0:
-                bs = bootstrap_sample_means(
-                    values,
-                    n_bootstrap=n_bootstrap,
-                    rng=rng,
-                    chunk_size=chunk_size,
-                )
-                ci_low, ci_high = np.quantile(bs, [0.025, 0.975])
-                boot_mean = float(bs.mean())
+            if metric_name.startswith("mse_union_"):
+                suffix = metric_name[len("mse_union_") :]
+                norm_col = f"norm_union_{suffix}"
+            elif metric_name.startswith("mse_"):
+                suffix = metric_name[len("mse_") :]
+                norm_col = f"norm_{suffix}"
             else:
-                ci_low, ci_high = np.nan, np.nan
-                boot_mean = point_mean
+                norm_col = None
+
+            if norm_col is not None and norm_col in df_one_set.columns:
+                numerators = df_one_set[metric_name].to_numpy(dtype=np.float64, copy=True)
+                denominators = df_one_set[norm_col].to_numpy(dtype=np.float64, copy=True)
+                valid_mask = (
+                    np.isfinite(numerators)
+                    & np.isfinite(denominators)
+                    & (denominators > 0)
+                )
+                numerators = numerators[valid_mask]
+                denominators = denominators[valid_mask]
+                n_perts = int(numerators.shape[0])
+                if n_perts == 0:
+                    continue
+
+                # Match evaluator's normalized MSE style: sum(mse) / sum(norm)
+                point_mean = float(
+                    numerators.sum() / np.clip(denominators.sum(), 1e-12, None)
+                )
+                if n_bootstrap > 0:
+                    bs = bootstrap_ratio_of_sums(
+                        numerators,
+                        denominators,
+                        n_bootstrap=n_bootstrap,
+                        rng=rng,
+                        chunk_size=chunk_size,
+                    )
+                    ci_low, ci_high = np.quantile(bs, [0.025, 0.975])
+                    boot_mean = float(bs.mean())
+                else:
+                    ci_low, ci_high = np.nan, np.nan
+                    boot_mean = point_mean
+            else:
+                values = df_one_set[metric_name].to_numpy(dtype=np.float64, copy=True)
+                values = values[np.isfinite(values)]
+                n_perts = int(values.shape[0])
+                if n_perts == 0:
+                    continue
+
+                point_mean = float(values.mean())
+                if n_bootstrap > 0:
+                    bs = bootstrap_sample_means(
+                        values,
+                        n_bootstrap=n_bootstrap,
+                        rng=rng,
+                        chunk_size=chunk_size,
+                    )
+                    ci_low, ci_high = np.quantile(bs, [0.025, 0.975])
+                    boot_mean = float(bs.mean())
+                else:
+                    ci_low, ci_high = np.nan, np.nan
+                    boot_mean = point_mean
 
             rows.append(
                 {
