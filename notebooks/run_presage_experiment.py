@@ -274,6 +274,7 @@ parser.add_argument("--pathway_files", type=str, default=None)
 parser.add_argument("--use_training_gex_embeddings", action="store_true")
 parser.add_argument("--eval_test", action="store_true")
 parser.add_argument("--use_old", action="store_true")
+parser.add_argument("--enhance_added_embeddings", action="store_true")
 parser.add_argument(
     "--bootstrap_iters",
     type=int,
@@ -296,6 +297,53 @@ parser.add_argument("--tag", type=str, default=None)
 
 parser.add_argument("--batch_size", type=int, default=None)
 parser.add_argument("--lr", type=float, default=None)
+parser.add_argument("--weight_decay", type=float, default=None)
+parser.add_argument(
+    "--optimizer",
+    type=str,
+    choices=["Adam", "AdamW", "SGD"],
+    default=None,
+)
+parser.add_argument(
+    "--scheduler",
+    type=str,
+    choices=["none", "cosine", "plateau"],
+    default=None,
+)
+parser.add_argument("--warmup_epochs", type=int, default=None)
+parser.add_argument("--min_lr_ratio", type=float, default=None)
+parser.add_argument("--scheduler_patience", type=int, default=None)
+parser.add_argument("--max_epochs", type=int, default=None)
+parser.add_argument(
+    "--precision",
+    type=str,
+    choices=["16-mixed", "16", "32"],
+    default=None,
+)
+parser.add_argument("--item_hidden_size", type=int, default=None)
+parser.add_argument("--item_nlayers", type=int, default=None)
+parser.add_argument("--pathway_item_hidden_size", type=int, default=None)
+parser.add_argument("--pathway_item_nlayers", type=int, default=None)
+parser.add_argument(
+    "--pathway_weight_type",
+    type=str,
+    choices=["gat", "vector", "mean"],
+    default=None,
+)
+parser.add_argument("--pool_nlayers", type=int, default=None)
+parser.add_argument("--softmax_temperature", type=float, default=None)
+parser.add_argument("--gat_weight", type=float, default=None)
+parser.add_argument("--item_dropout", type=float, default=None)
+parser.add_argument("--pathway_dropout", type=float, default=None)
+parser.add_argument("--source_dropout", type=float, default=None)
+parser.add_argument("--pathway_layer_norm", action="store_true")
+parser.add_argument(
+    "--batch_norm",
+    type=lambda x: str(x).lower() in {"1", "true", "yes", "y"},
+    default=None,
+)
+parser.add_argument("--gradient_clip_val", type=float, default=None)
+parser.add_argument("--detect_anomaly", action="store_true")
 parser.add_argument("--output_root", type=str, default="./experiment_runs")
 
 args = parser.parse_args()
@@ -330,25 +378,59 @@ for key, value in singles_config.items():
 singles_config = new_config
 config.update(singles_config)
 
-if args.batch_size is not None:
-    modify_config = {
+modify_config = {
     "training.eval_test": args.eval_test,
     "model.pathway_files": args.pathway_files,
     "model.n_nmf_embedding": args.n_nmf_embedding,
     "model.use_training_gex_embeddings": args.use_training_gex_embeddings,
     "data.data_dir": "../data/",
+}
+
+if args.enhance_added_embeddings:
+    modify_config.update(
+        {
+            "model.optimizer": "AdamW",
+            "model.scheduler": "cosine",
+            "model.warmup_epochs": 5,
+            "model.min_lr_ratio": 0.05,
+            "model.weight_decay": 1.0e-4,
+            "model.item_dropout": 0.10,
+            "model.pathway_dropout": 0.10,
+            "model.source_dropout": 0.10,
+            "model.pathway_layer_norm": True,
+        }
+    )
+
+optional_overrides = {
     "data.batch_size": args.batch_size,
-    "model.lr": args.lr 
+    "model.lr": args.lr,
+    "model.weight_decay": args.weight_decay,
+    "model.optimizer": args.optimizer,
+    "model.scheduler": args.scheduler,
+    "model.warmup_epochs": args.warmup_epochs,
+    "model.min_lr_ratio": args.min_lr_ratio,
+    "model.scheduler_patience": args.scheduler_patience,
+    "training.max_epochs": args.max_epochs,
+    "training.precision": args.precision,
+    "model.item_hidden_size": args.item_hidden_size,
+    "model.item_nlayers": args.item_nlayers,
+    "model.pathway_item_hidden_size": args.pathway_item_hidden_size,
+    "model.pathway_item_nlayers": args.pathway_item_nlayers,
+    "model.pathway_weight_type": args.pathway_weight_type,
+    "model.pool_nlayers": args.pool_nlayers,
+    "model.softmax_temperature": args.softmax_temperature,
+    "model.gat_weight": args.gat_weight,
+    "model.item_dropout": args.item_dropout,
+    "model.pathway_dropout": args.pathway_dropout,
+    "model.source_dropout": args.source_dropout,
+    "model.batch_norm": args.batch_norm,
 }
-else:
-    modify_config = {
-    "training.eval_test": args.eval_test,
-    "model.pathway_files": args.pathway_files,
-    "model.n_nmf_embedding": args.n_nmf_embedding,
-    "model.use_training_gex_embeddings": args.use_training_gex_embeddings,
-    "data.data_dir": "../data/",
-    #"model.lr": args.lr 
-}
+for key, value in optional_overrides.items():
+    if value is not None:
+        modify_config[key] = value
+
+if args.pathway_layer_norm:
+    modify_config["model.pathway_layer_norm"] = True
 
 config.update(modify_config)
 config = parse_config(config)
@@ -388,6 +470,7 @@ print("datamodule setup complete.")
 # initialize model
 model_config = config["model"]
 model_config["dataset"] = dataset
+model_config["training_max_epochs"] = config["training"]["max_epochs"]
 
 # legacy unused parameters
 model_config["pca_dim"] = None
@@ -453,7 +536,13 @@ checkpoint_callback = ModelCheckpoint(
     mode="min",
 )
 
-torch.autograd.set_detect_anomaly(True)
+if args.detect_anomaly or not args.enhance_added_embeddings:
+    torch.autograd.set_detect_anomaly(True)
+
+gradient_clip_val = args.gradient_clip_val
+if gradient_clip_val is None:
+    gradient_clip_val = 0.5 if args.enhance_added_embeddings else 0.1
+
 trainer = pl.Trainer(
     logger=logger,
     log_every_n_steps=3,
@@ -461,16 +550,30 @@ trainer = pl.Trainer(
     callbacks=[early_stop_callback, checkpoint_callback],
     reload_dataloaders_every_n_epochs=1,
     **config["training"],
-    gradient_clip_val=0.1,
+    gradient_clip_val=gradient_clip_val,
 )
 
 trainer.fit(lightning_module, datamodule=datamodule)
 best_model_path = checkpoint_callback.best_model_path
+best_val_loss = _to_python_scalar(checkpoint_callback.best_model_score)
 
-datamodule.setup("test")
+training_summary = {
+    "best_model_path": best_model_path,
+    "best_val_loss": best_val_loss,
+    "stopped_epoch": int(trainer.current_epoch),
+    "gradient_clip_val": float(gradient_clip_val),
+    "enhance_added_embeddings": bool(args.enhance_added_embeddings),
+    "use_old": bool(args.use_old),
+}
+training_summary_file = run_dir / "training_summary.json"
+with open(training_summary_file, "w") as f:
+    json.dump(_to_jsonable(training_summary), f, indent=2)
+print("saved training summary:", training_summary_file)
+
 datamodule._data_setup = False
+datamodule.setup("test")
 
-checkpoint = torch.load(best_model_path)
+checkpoint = torch.load(best_model_path, map_location="cpu")
 lightning_module.load_state_dict(checkpoint["state_dict"])
 
 # log final eval metrics

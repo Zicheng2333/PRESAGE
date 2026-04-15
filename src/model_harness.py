@@ -332,22 +332,95 @@ class ModelHarness(pl.LightningModule):
             return keys, preds
 
     def configure_optimizers(self):
-        # only SGD w/ momentum and Adam implemented
-        if self.config["optimizer"] == "SGD":
+        optimizer_name = self.config.get("optimizer", "Adam")
+        lr = self.config["lr"]
+        weight_decay = self.config.get("weight_decay", 0.0)
+
+        if optimizer_name == "SGD":
             opt = optim.SGD(
                 self.parameters(),
-                lr=self.config["lr"],
-                weight_decay=self.config["weight_decay"],
-                momentum=self.config["momentum"],
+                lr=lr,
+                weight_decay=weight_decay,
+                momentum=self.config.get("momentum", 0.9),
+            )
+        elif optimizer_name == "AdamW":
+            opt = optim.AdamW(
+                self.parameters(),
+                lr=lr,
+                weight_decay=weight_decay,
             )
         else:
             opt = optim.Adam(
                 self.parameters(),
-                lr=self.config["lr"],
-                weight_decay=self.config["weight_decay"],
+                lr=lr,
+                weight_decay=weight_decay,
             )
 
-        scheduler = optim.lr_scheduler.StepLR(opt, step_size=200, gamma=1)
-        # scheduler = optim.lr_scheduler.StepLR(opt, step_size=5,gamma=0.5)
+        scheduler_name = str(self.config.get("scheduler", "none")).lower()
+        if scheduler_name in {"none", "off"}:
+            return opt
 
-        return [opt], [scheduler]
+        min_lr_ratio = float(self.config.get("min_lr_ratio", 0.01))
+
+        if scheduler_name == "plateau":
+            scheduler = optim.lr_scheduler.ReduceLROnPlateau(
+                opt,
+                mode="min",
+                factor=0.5,
+                patience=int(self.config.get("scheduler_patience", 5)),
+                min_lr=lr * min_lr_ratio,
+            )
+            return {
+                "optimizer": opt,
+                "lr_scheduler": {
+                    "scheduler": scheduler,
+                    "monitor": "val_loss",
+                    "interval": "epoch",
+                    "frequency": 1,
+                },
+            }
+
+        if scheduler_name == "cosine":
+            total_epochs = int(self.config.get("training_max_epochs", 0))
+            warmup_epochs = max(0, int(self.config.get("warmup_epochs", 0)))
+
+            if total_epochs <= 1:
+                return opt
+
+            warmup_epochs = min(warmup_epochs, total_epochs - 1)
+            eta_min = lr * min_lr_ratio
+
+            if warmup_epochs > 0:
+                warmup = optim.lr_scheduler.LinearLR(
+                    opt,
+                    start_factor=0.1,
+                    end_factor=1.0,
+                    total_iters=warmup_epochs,
+                )
+                cosine = optim.lr_scheduler.CosineAnnealingLR(
+                    opt,
+                    T_max=max(1, total_epochs - warmup_epochs),
+                    eta_min=eta_min,
+                )
+                scheduler = optim.lr_scheduler.SequentialLR(
+                    opt,
+                    schedulers=[warmup, cosine],
+                    milestones=[warmup_epochs],
+                )
+            else:
+                scheduler = optim.lr_scheduler.CosineAnnealingLR(
+                    opt,
+                    T_max=total_epochs,
+                    eta_min=eta_min,
+                )
+
+            return {
+                "optimizer": opt,
+                "lr_scheduler": {
+                    "scheduler": scheduler,
+                    "interval": "epoch",
+                    "frequency": 1,
+                },
+            }
+
+        raise ValueError(f"Unsupported scheduler: {scheduler_name}")

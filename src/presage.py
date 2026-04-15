@@ -57,19 +57,23 @@ class MLP(nn.Module):
         nlayers = config["nlayers"]
         l1_norm = config['l1norm']
         batch_norm = config["batch_norm"]
+        dropout = float(config.get("dropout", 0.0))
         if l1_norm:
             linear = SpaRedLinear
         else:
             linear = nn.Linear
         layers = []
-        for hidden_size in [hidden_size] * nlayers:
-            layers.append(linear(input_size, hidden_size))
+        last_dim = input_size
+        for _ in range(nlayers):
+            layers.append(linear(last_dim, hidden_size))
             if batch_norm:
                 layers.append(nn.BatchNorm1d(hidden_size))
             #layers.append(nn.ReLU())
             layers.append(nn.LeakyReLU())
-            input_size = hidden_size
-        layers.append(linear(hidden_size, output_size,bias=True))
+            if dropout > 0:
+                layers.append(nn.Dropout(dropout))
+            last_dim = hidden_size
+        layers.append(linear(last_dim, output_size,bias=True))
         self.mlp = nn.Sequential(*layers)
         self.config = config
 
@@ -134,6 +138,11 @@ class PRESAGE(nn.Module):
         self.pathway_encoder = GeneEmbeddingTransformation(
             self.gene_embeddings, config, pathway_encoder_function
         )
+        self.pathway_dropout = nn.Dropout(float(config.get("pathway_dropout", 0.0)))
+        self.source_dropout = float(config.get("source_dropout", 0.0))
+        self.pathway_output_norm = None
+        if config.get("pathway_layer_norm", False):
+            self.pathway_output_norm = nn.LayerNorm(config["item_hidden_size"])
 
         if self.pca_dim is not None:
             self.pca = PCAWithTrainableDecoder(
@@ -186,6 +195,10 @@ class PRESAGE(nn.Module):
         emb_h = self.pathway_encoder(emb)
 
         emb_h = self.activation(emb_h)
+        if self.pathway_output_norm is not None:
+            emb_h = self.pathway_output_norm(emb_h.transpose(1, 2)).transpose(1, 2)
+        emb_h = self.pathway_dropout(emb_h)
+        emb_h, mask = self._apply_source_dropout(emb_h, mask)
         emb_h_temp = emb_h
 
 
@@ -203,6 +216,34 @@ class PRESAGE(nn.Module):
             self.attention_weights = self.pool.pool.attention_weights
 
         return emb_h_temp, emb_h_final
+
+    def _apply_source_dropout(self, emb_h, mask):
+        if (not self.training) or self.source_dropout <= 0 or emb_h.shape[-1] <= 1:
+            return emb_h, mask
+
+        keep_prob = 1.0 - self.source_dropout
+        keep_mask = (
+            torch.rand((emb_h.shape[0], 1, emb_h.shape[-1]), device=emb_h.device)
+            < keep_prob
+        )
+
+        no_source_rows = torch.where(keep_mask.sum(dim=-1).squeeze(-1) == 0)[0]
+        if no_source_rows.numel() > 0:
+            fallback_indices = torch.randint(
+                low=0,
+                high=emb_h.shape[-1],
+                size=(no_source_rows.numel(),),
+                device=emb_h.device,
+            )
+            keep_mask[no_source_rows, 0, fallback_indices] = True
+
+        keep_mask = keep_mask & mask
+        fully_masked_rows = torch.where(keep_mask.sum(dim=-1).squeeze(-1) == 0)[0]
+        if fully_masked_rows.numel() > 0:
+            keep_mask[fully_masked_rows] = mask[fully_masked_rows]
+
+        emb_h = emb_h * keep_mask.to(dtype=emb_h.dtype) / keep_prob
+        return emb_h, keep_mask
 
     def emb_to_out(self, emb_h, locs_gene, locs_combos):
 
@@ -255,8 +296,13 @@ class ItemNet(nn.Module):
 class ItemMLP(nn.Module):
     def __init__(self, out_dim, config):
         super(ItemMLP, self).__init__()
+        item_dropout = float(config.get("item_dropout", 0.0))
         if config["item_nlayers"] == 0:
-            self.item_net = nn.Linear(config["item_hidden_size"], out_dim)
+            layers = []
+            if item_dropout > 0:
+                layers.append(nn.Dropout(item_dropout))
+            layers.append(nn.Linear(config["item_hidden_size"], out_dim))
+            self.item_net = nn.Sequential(*layers)
         else:
             self.item_net = MLP(
                 input_size=config["item_hidden_size"],
@@ -266,6 +312,7 @@ class ItemMLP(nn.Module):
                     nlayers=config["item_nlayers"],
                     l1norm=False,
                     batch_norm=config["batch_norm"],
+                    dropout=item_dropout,
                 ),
             )
 
@@ -300,6 +347,7 @@ class PathwayMLP(nn.Module):
         self, in_dim, out_dim, hidden_dim, n_layers, batch_norm, n_pathways, config
     ):
         super(PathwayMLP, self).__init__()
+        pathway_dropout = float(config.get("pathway_dropout", 0.0))
 
         # We will build a separate MLP for each pathway.
         self.pathway_mlps = nn.ModuleList()
@@ -313,6 +361,8 @@ class PathwayMLP(nn.Module):
                 mlp_layers.append(nn.Linear(in_dim, hidden_dim))
                 nn.init.xavier_uniform_(mlp_layers[-1].weight)
                 mlp_layers.append(nn.LeakyReLU())
+                if pathway_dropout > 0:
+                    mlp_layers.append(nn.Dropout(pathway_dropout))
                 mlp_layers.append(nn.Linear(hidden_dim, out_dim))
                 nn.init.xavier_uniform_(mlp_layers[-1].weight)
             else:  # if more than one hidden layer
@@ -322,11 +372,15 @@ class PathwayMLP(nn.Module):
                     mlp_layers.append(nn.BatchNorm1d(hidden_dim))
                 for _ in range(n_layers - 2):  # add hidden layers
                     mlp_layers.append(nn.LeakyReLU())
+                    if pathway_dropout > 0:
+                        mlp_layers.append(nn.Dropout(pathway_dropout))
                     mlp_layers.append(nn.Linear(hidden_dim, hidden_dim))
                     nn.init.xavier_uniform_(mlp_layers[-1].weight)
                     if batch_norm:
                         mlp_layers.append(nn.BatchNorm1d(hidden_dim))
                 mlp_layers.append(nn.LeakyReLU())
+                if pathway_dropout > 0:
+                    mlp_layers.append(nn.Dropout(pathway_dropout))
                 mlp_layers.append(nn.Linear(hidden_dim, out_dim))  # output layer
                 nn.init.xavier_uniform_(mlp_layers[-1].weight)
 
