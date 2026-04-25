@@ -336,7 +336,17 @@ parser.add_argument("--gat_weight", type=float, default=None)
 parser.add_argument("--item_dropout", type=float, default=None)
 parser.add_argument("--pathway_dropout", type=float, default=None)
 parser.add_argument("--source_dropout", type=float, default=None)
-parser.add_argument("--pathway_layer_norm", action="store_true")
+parser.add_argument(
+    "--pathway_layer_norm",
+    dest="pathway_layer_norm",
+    action="store_true",
+)
+parser.add_argument(
+    "--no_pathway_layer_norm",
+    dest="pathway_layer_norm",
+    action="store_false",
+)
+parser.set_defaults(pathway_layer_norm=None)
 parser.add_argument(
     "--batch_norm",
     type=lambda x: str(x).lower() in {"1", "true", "yes", "y"},
@@ -344,9 +354,19 @@ parser.add_argument(
 )
 parser.add_argument("--gradient_clip_val", type=float, default=None)
 parser.add_argument("--detect_anomaly", action="store_true")
+parser.add_argument("--eval_val_metrics", action="store_true")
+parser.add_argument("--monitor_metric", type=str, default="val_loss")
+parser.add_argument(
+    "--monitor_mode",
+    type=str,
+    choices=["min", "max"],
+    default=None,
+)
 parser.add_argument("--output_root", type=str, default="./experiment_runs")
 
 args = parser.parse_args()
+if args.monitor_metric != "val_loss":
+    args.eval_val_metrics = True
 
 dataset = args.dataset
 seed = args.seed
@@ -429,8 +449,8 @@ for key, value in optional_overrides.items():
     if value is not None:
         modify_config[key] = value
 
-if args.pathway_layer_norm:
-    modify_config["model.pathway_layer_norm"] = True
+if args.pathway_layer_norm is not None:
+    modify_config["model.pathway_layer_norm"] = args.pathway_layer_norm
 
 config.update(modify_config)
 config = parse_config(config)
@@ -471,6 +491,7 @@ print("datamodule setup complete.")
 model_config = config["model"]
 model_config["dataset"] = dataset
 model_config["training_max_epochs"] = config["training"]["max_epochs"]
+model_config["eval_val_metrics"] = bool(args.eval_val_metrics)
 
 # legacy unused parameters
 model_config["pca_dim"] = None
@@ -519,21 +540,46 @@ predictions_file = run_dir / f"predictions_all_{dataset}.csv"
 print("adjusted prediction file:", predictions_file)
 
 early_stop_callback = EarlyStopping(
-    monitor="val_loss",
+    monitor=args.monitor_metric,
     min_delta=1e-6,
     patience=args.patience,
     verbose=True,
-    mode="min",
+    mode=(
+        args.monitor_mode
+        if args.monitor_mode is not None
+        else (
+            "min"
+            if any(
+                token in args.monitor_metric.lower() for token in ("loss", "mse")
+            )
+            else "max"
+        )
+    ),
 )
+
+monitor_mode = early_stop_callback.mode
+if args.monitor_metric != "val_loss":
+    model_config["eval_val_metrics"] = True
 
 now_str = experiment_time
 
+if args.monitor_metric == "val_loss":
+    checkpoint_filename = (
+        f"my_model-{dataset}-{seed.split('/')[-1].split('.json')[0]}"
+        f"-{now_str}-{{epoch:02d}}-{{val_loss:.2f}}"
+    )
+else:
+    checkpoint_filename = (
+        f"my_model-{dataset}-{seed.split('/')[-1].split('.json')[0]}"
+        f"-{now_str}-{{epoch:02d}}"
+    )
+
 checkpoint_callback = ModelCheckpoint(
-    monitor="val_loss",
+    monitor=args.monitor_metric,
     dirpath=str(run_dir / "saved_models"),
-    filename=f"my_model-{dataset}-{seed.split('/')[-1].split('.json')[0]}-{now_str}-{{epoch:02d}}-{{val_loss:.2f}}",
+    filename=checkpoint_filename,
     save_top_k=1,
-    mode="min",
+    mode=monitor_mode,
 )
 
 if args.detect_anomaly or not args.enhance_added_embeddings:
@@ -555,15 +601,21 @@ trainer = pl.Trainer(
 
 trainer.fit(lightning_module, datamodule=datamodule)
 best_model_path = checkpoint_callback.best_model_path
-best_val_loss = _to_python_scalar(checkpoint_callback.best_model_score)
+best_monitor_value = _to_python_scalar(checkpoint_callback.best_model_score)
 
 training_summary = {
     "best_model_path": best_model_path,
-    "best_val_loss": best_val_loss,
+    "best_val_loss": (
+        best_monitor_value if args.monitor_metric == "val_loss" else None
+    ),
+    "best_monitor_value": best_monitor_value,
+    "monitor_metric": args.monitor_metric,
+    "monitor_mode": monitor_mode,
     "stopped_epoch": int(trainer.current_epoch),
     "gradient_clip_val": float(gradient_clip_val),
     "enhance_added_embeddings": bool(args.enhance_added_embeddings),
     "use_old": bool(args.use_old),
+    "eval_val_metrics": bool(model_config["eval_val_metrics"]),
 }
 training_summary_file = run_dir / "training_summary.json"
 with open(training_summary_file, "w") as f:

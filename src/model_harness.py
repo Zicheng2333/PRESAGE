@@ -201,6 +201,9 @@ class ModelHarness(pl.LightningModule):
 
     def on_validation_epoch_end(self):
         self.module.current_batch = 0
+        if not self.validation_step_outputs:
+            return
+
         # collect validation step outputs
         src, tgt, pred = [], [], []
         for x in self.validation_step_outputs:
@@ -223,8 +226,9 @@ class ModelHarness(pl.LightningModule):
             _, mean_tgts = indicator_groupby(src, tgt)
             keys = np.array([self.ind_to_pert(key) for key in keys])
 
-            # pass to eval suite and log results
-            # self.log_dict(self.evaluator(keys, mean_tgts, mean_preds, False))
+            if self.config.get("eval_val_metrics", False):
+                val_eval_dict = self.evaluator(keys, mean_tgts, mean_preds, False)
+                self.log_dict(prepend_to_keys("val", val_eval_dict))
 
             # clean up
             self.validation_step_outputs.clear()

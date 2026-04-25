@@ -5,13 +5,24 @@ import json
 from pathlib import Path
 from typing import Any
 
-PREFERRED_METRICS = [
+PREFERRED_TEST_METRICS = [
     "test_loss",
     "test_avg_cossim_top20_de",
     "test_avg_cossim_top20_unionde",
     "test_perturbations_with_effect_avg_cossim_top20_unionde",
     "test_pn_mse_top20_de",
     "test_perturbations_with_effect_pn_mse_top20_unionde",
+]
+
+PREFERRED_BOOTSTRAP_METRICS = [
+    "cossim_20",
+    "cossim_unionde_20",
+    "mse_20",
+    "mse_union_20",
+    "cossim_200",
+    "cossim_unionde_200",
+    "mse_200",
+    "mse_union_200",
 ]
 
 
@@ -36,6 +47,43 @@ def load_json(path: Path) -> Any:
         return json.load(handle)
 
 
+def maybe_float(value: str) -> Any:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return value
+
+
+def load_bootstrap_summary(run_dir: Path) -> dict[str, Any]:
+    bootstrap_files = sorted(run_dir.glob("bootstrap_summary_*.csv"))
+    if not bootstrap_files:
+        return {}
+
+    metrics: dict[str, Any] = {}
+    with bootstrap_files[0].open() as handle:
+        reader = csv.DictReader(handle)
+        for row in reader:
+            metric = row.get("metric")
+            if not metric:
+                continue
+            metrics[f"bootstrap_{metric}"] = maybe_float(row.get("point_mean"))
+            metrics[f"bootstrap_mean_{metric}"] = maybe_float(
+                row.get("bootstrap_mean")
+            )
+    return metrics
+
+
+def sortable_value(value: Any) -> float:
+    if value is None:
+        return float("-inf")
+    if isinstance(value, (int, float)):
+        return float(value)
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return float("-inf")
+
+
 parser = argparse.ArgumentParser(description="Summarize PRESAGE grid-search runs.")
 parser.add_argument("root", type=Path, help="Grid-search output directory")
 parser.add_argument(
@@ -43,6 +91,17 @@ parser.add_argument(
     action="append",
     default=[],
     help="Summary column mapping in the form name=config.path",
+)
+parser.add_argument(
+    "--sort-by",
+    type=str,
+    default="best_val_loss",
+    help="Column used to sort the final CSV.",
+)
+parser.add_argument(
+    "--descending",
+    action="store_true",
+    help="Sort the final CSV in descending order.",
 )
 parser.add_argument(
     "--preview",
@@ -77,31 +136,40 @@ for run_dir in sorted(path for path in root.iterdir() if path.is_dir()):
         "run_dir": str(run_dir),
         "tag": nested_get(cfg, "cli_args.tag"),
         "best_val_loss": summary.get("best_val_loss"),
+        "best_monitor_value": summary.get("best_monitor_value"),
+        "monitor_metric": summary.get("monitor_metric"),
+        "monitor_mode": summary.get("monitor_mode"),
     }
     for name, path in field_specs:
         row[name] = nested_get(cfg, path)
 
-    for key in PREFERRED_METRICS:
+    for key in PREFERRED_TEST_METRICS:
         if key in test_metrics:
             row[key] = test_metrics[key]
     for key, value in test_metrics.items():
         if isinstance(value, (int, float)):
             row.setdefault(key, value)
 
+    row.update(load_bootstrap_summary(run_dir))
+
     rows.append(row)
     all_keys.update(row)
 
-rows.sort(
-    key=lambda row: float("inf")
-    if row.get("best_val_loss") is None
-    else float(row["best_val_loss"])
-)
+reverse_sort = args.descending
+if args.sort_by == "best_val_loss" and not args.descending:
+    reverse_sort = False
+rows.sort(key=lambda row: sortable_value(row.get(args.sort_by)), reverse=reverse_sort)
 
 base_fields = [
     "run_dir",
     "tag",
     "best_val_loss",
-    *PREFERRED_METRICS,
+    "best_monitor_value",
+    "monitor_metric",
+    "monitor_mode",
+    *PREFERRED_TEST_METRICS,
+    *(f"bootstrap_{metric}" for metric in PREFERRED_BOOTSTRAP_METRICS),
+    *(f"bootstrap_mean_{metric}" for metric in PREFERRED_BOOTSTRAP_METRICS),
     *(name for name, _ in field_specs),
 ]
 fieldnames: list[str] = []
@@ -116,5 +184,6 @@ with out_file.open("w", newline="") as handle:
     writer.writerows(rows)
 
 print(f"saved summary: {out_file}")
+print(f"sorted by: {args.sort_by} ({'desc' if reverse_sort else 'asc'})")
 for row in rows[: args.preview]:
     print(row)
