@@ -85,7 +85,7 @@ def sortable_value(value: Any) -> float:
 
 
 parser = argparse.ArgumentParser(description="Summarize PRESAGE grid-search runs.")
-parser.add_argument("root", type=Path, help="Grid-search output directory")
+parser.add_argument("--root", type=Path, help="Grid-search output directory")
 parser.add_argument(
     "--field",
     action="append",
