@@ -383,8 +383,14 @@ class MeanPool(nn.Module):
     def __init__(self, n_pathways, config):
         super(MeanPool, self).__init__()
 
-    def forward(self, tensor):
-        return torch.mean(tensor, dim=-1)
+    def forward(self, tensor, mask=None):
+        if mask is None:
+            return torch.mean(tensor, dim=-1)
+
+        mask = mask.to(dtype=tensor.dtype)
+        tensor = tensor * mask
+        denom = mask.sum(-1).clamp(min=1.0)
+        return torch.sum(tensor, dim=-1) / denom
 
 
 class LearnableWeightPool(nn.Module):
@@ -394,14 +400,33 @@ class LearnableWeightPool(nn.Module):
         self.pathway_weight_vector = nn.Parameter(torch.randn(1, n_pathways) * eps)
         self.temperature = config["softmax_temperature"]
 
-    def forward(self, tensor):
-        p_weights = torch.nn.functional.softmax(
-            self.pathway_weight_vector / self.temperature, dim=-1
-        ).unsqueeze(0)
-        # print(torch.sort(p_weights))
+    def forward(self, tensor, mask=None):
+        if mask is None:
+            p_weights = torch.nn.functional.softmax(
+                self.pathway_weight_vector / self.temperature, dim=-1
+            ).unsqueeze(0)
+            self.p_weight_vec = torch.nn.functional.softmax(
+                self.pathway_weight_vector / self.temperature, dim=-1
+            )
+            self.kg_weights = p_weights
+            return torch.sum(tensor * p_weights, dim=-1)
+
+        mask_bool = mask.bool()
+        logits = self.pathway_weight_vector.unsqueeze(0).expand_as(mask)
+        logits = logits.masked_fill(~mask_bool, -1e9)
+
+        all_masked = ~mask_bool.any(dim=-1, keepdim=True)
+        logits = torch.where(all_masked, torch.zeros_like(logits), logits)
+
+        p_weights = torch.nn.functional.softmax(logits / self.temperature, dim=-1)
+        p_weights = torch.where(all_masked, torch.zeros_like(p_weights), p_weights)
+
+        tensor = tensor * mask.to(dtype=tensor.dtype)
         h = tensor * p_weights
         self.kg_weights = p_weights
-        # print(self.kg_weights)
+        self.p_weight_vec = torch.nn.functional.softmax(
+            self.pathway_weight_vector / self.temperature, dim=-1
+        )
 
         return torch.sum(h, dim=-1)
 

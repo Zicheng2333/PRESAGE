@@ -85,7 +85,19 @@ def sortable_value(value: Any) -> float:
 
 
 parser = argparse.ArgumentParser(description="Summarize PRESAGE grid-search runs.")
-parser.add_argument("root", type=Path, help="Grid-search output directory")
+parser.add_argument(
+    "root",
+    nargs="?",
+    type=Path,
+    help="Grid-search output directory",
+)
+parser.add_argument(
+    "--root",
+    dest="root_flag",
+    type=Path,
+    default=None,
+    help="Grid-search output directory",
+)
 parser.add_argument(
     "--field",
     action="append",
@@ -111,7 +123,9 @@ parser.add_argument(
 )
 args = parser.parse_args()
 
-root = args.root
+root = args.root_flag or args.root
+if root is None:
+    parser.error("a grid-search output directory is required via positional root or --root")
 field_specs = [parse_field(item) for item in args.field]
 rows: list[dict[str, Any]] = []
 all_keys: set[str] = set()

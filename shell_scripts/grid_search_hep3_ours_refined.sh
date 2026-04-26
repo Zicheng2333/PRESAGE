@@ -102,7 +102,7 @@ for backbone in new old; do
   done
 done
 
-"$PYTHON_BIN" "$SCRIPT_DIR/summarize_grid_search.py" "$OUTPUT_ROOT" \
+"$PYTHON_BIN" "$SCRIPT_DIR/summarize_grid_search.py" --root "$OUTPUT_ROOT" \
   --sort-by bootstrap_cossim_unionde_20 \
   --descending \
   --field use_old=cli_args.use_old \
