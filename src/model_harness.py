@@ -229,6 +229,18 @@ class ModelHarness(pl.LightningModule):
             if self.config.get("eval_val_metrics", False):
                 val_eval_dict = self.evaluator(keys, mean_tgts, mean_preds, False)
                 self.log_dict(prepend_to_keys("val", val_eval_dict))
+                cossim_de = val_eval_dict.get("avg_cossim_top20_de")
+                cossim_union = val_eval_dict.get("avg_cossim_top20_unionde")
+                norm_mse_de = val_eval_dict.get("avg_normalized_mse_top20_de")
+                norm_mse_union = val_eval_dict.get("avg_normalized_mse_top20_unionde")
+                if cossim_de is not None and cossim_union is not None:
+                    dual_cossim = 0.5 * (float(cossim_de) + float(cossim_union))
+                    self.log("val_dual_cossim_top20", dual_cossim)
+                    if norm_mse_de is not None and norm_mse_union is not None:
+                        balanced_top20 = dual_cossim - 0.1 * (
+                            float(norm_mse_de) + float(norm_mse_union)
+                        )
+                        self.log("val_balanced_top20", balanced_top20)
 
             # clean up
             self.validation_step_outputs.clear()

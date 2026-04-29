@@ -140,6 +140,18 @@ class PRESAGE(nn.Module):
         )
         self.pathway_dropout = nn.Dropout(float(config.get("pathway_dropout", 0.0)))
         self.source_dropout = float(config.get("source_dropout", 0.0))
+        self.source_scale_buffer = None
+        self.source_scale_logits = None
+        tail_source_count = int(config.get("tail_source_count", 0) or 0)
+        tail_source_scale = float(config.get("tail_source_scale", 1.0))
+        if tail_source_count > 0:
+            init_scale = torch.ones((1, 1, n_pathways), dtype=torch.float32)
+            tail_source_count = min(tail_source_count, n_pathways)
+            init_scale[:, :, -tail_source_count:] = max(tail_source_scale, 1e-3)
+            if config.get("learn_source_scaling", False):
+                self.source_scale_logits = nn.Parameter(torch.log(init_scale))
+            else:
+                self.register_buffer("source_scale_buffer", init_scale)
         self.pathway_output_norm = None
         if config.get("pathway_layer_norm", False):
             self.pathway_output_norm = nn.LayerNorm(config["item_hidden_size"])
@@ -199,6 +211,7 @@ class PRESAGE(nn.Module):
             emb_h = self.pathway_output_norm(emb_h.transpose(1, 2)).transpose(1, 2)
         emb_h = self.pathway_dropout(emb_h)
         emb_h, mask = self._apply_source_dropout(emb_h, mask)
+        emb_h = self._apply_source_scaling(emb_h)
         emb_h_temp = emb_h
 
 
@@ -244,6 +257,19 @@ class PRESAGE(nn.Module):
 
         emb_h = emb_h * keep_mask.to(dtype=emb_h.dtype) / keep_prob
         return emb_h, keep_mask
+
+    def _apply_source_scaling(self, emb_h):
+        scale = None
+        if self.source_scale_logits is not None:
+            scale = torch.exp(self.source_scale_logits).clamp(min=1e-3, max=5.0)
+        elif self.source_scale_buffer is not None:
+            scale = self.source_scale_buffer
+
+        if scale is None:
+            return emb_h
+
+        self.source_scale_values = scale.detach().cpu()
+        return emb_h * scale.to(device=emb_h.device, dtype=emb_h.dtype)
 
     def emb_to_out(self, emb_h, locs_gene, locs_combos):
 

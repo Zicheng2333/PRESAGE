@@ -337,6 +337,10 @@ parser.add_argument("--gat_weight", type=float, default=None)
 parser.add_argument("--item_dropout", type=float, default=None)
 parser.add_argument("--pathway_dropout", type=float, default=None)
 parser.add_argument("--source_dropout", type=float, default=None)
+parser.add_argument("--tail_source_count", type=int, default=None)
+parser.add_argument("--tail_source_scale", type=float, default=None)
+parser.add_argument("--learn_source_scaling", action="store_true")
+parser.add_argument("--separate_embedding_channels", action="store_true")
 parser.add_argument(
     "--pathway_layer_norm",
     dest="pathway_layer_norm",
@@ -444,6 +448,8 @@ optional_overrides = {
     "model.item_dropout": args.item_dropout,
     "model.pathway_dropout": args.pathway_dropout,
     "model.source_dropout": args.source_dropout,
+    "model.tail_source_count": args.tail_source_count,
+    "model.tail_source_scale": args.tail_source_scale,
     "model.batch_norm": args.batch_norm,
 }
 for key, value in optional_overrides.items():
@@ -452,6 +458,10 @@ for key, value in optional_overrides.items():
 
 if args.pathway_layer_norm is not None:
     modify_config["model.pathway_layer_norm"] = args.pathway_layer_norm
+if args.learn_source_scaling:
+    modify_config["model.learn_source_scaling"] = True
+if args.separate_embedding_channels:
+    modify_config["model.separate_embedding_channels"] = True
 
 config.update(modify_config)
 config = parse_config(config)

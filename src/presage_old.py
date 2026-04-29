@@ -133,6 +133,18 @@ class PRESAGE(nn.Module):
         self.pathway_encoder = GeneEmbeddingTransformation(
             self.gene_embeddings, config, pathway_encoder_function
         )
+        self.source_scale_buffer = None
+        self.source_scale_logits = None
+        tail_source_count = int(config.get("tail_source_count", 0) or 0)
+        tail_source_scale = float(config.get("tail_source_scale", 1.0))
+        if tail_source_count > 0:
+            init_scale = torch.ones((1, 1, n_pathways), dtype=torch.float32)
+            tail_source_count = min(tail_source_count, n_pathways)
+            init_scale[:, :, -tail_source_count:] = max(tail_source_scale, 1e-3)
+            if config.get("learn_source_scaling", False):
+                self.source_scale_logits = nn.Parameter(torch.log(init_scale))
+            else:
+                self.register_buffer("source_scale_buffer", init_scale)
 
         if self.pca_dim is not None:
             self.pca = PCAWithTrainableDecoder(
@@ -185,6 +197,7 @@ class PRESAGE(nn.Module):
         emb_h = self.pathway_encoder(emb)
 
         emb_h = self.activation(emb_h)
+        emb_h = self._apply_source_scaling(emb_h)
         emb_h_temp = emb_h
 
         self.emb_h = emb_h
@@ -201,6 +214,19 @@ class PRESAGE(nn.Module):
             self.attention_weights = self.pool.pool.attention_weights
 
         return emb_h_temp, emb_h_final
+
+    def _apply_source_scaling(self, emb_h):
+        scale = None
+        if self.source_scale_logits is not None:
+            scale = torch.exp(self.source_scale_logits).clamp(min=1e-3, max=5.0)
+        elif self.source_scale_buffer is not None:
+            scale = self.source_scale_buffer
+
+        if scale is None:
+            return emb_h
+
+        self.source_scale_values = scale.detach().cpu()
+        return emb_h * scale.to(device=emb_h.device, dtype=emb_h.dtype)
 
     def emb_to_out(self, emb_h, locs_gene, locs_combos):
 
@@ -656,17 +682,22 @@ def read_and_embed(pathway_file, genes_to_keep, n_nmf_embeddings, config, datamo
     # TODO 在这里做过更改
     if pathway_file != "None":
         with open(pathway_file, "r") as f_in:
-            gene_embedding_mat = pd.DataFrame(
-                np.zeros((len(genes_to_keep), n_nmf_embeddings))
-            )
-            gene_embedding_mat.index = genes_to_keep
-
-            weights_vec = pd.DataFrame(np.zeros((len(genes_to_keep), 1))).copy()
-            weights_vec.index = genes_to_keep
+            separate_channels = bool(config.get("separate_embedding_channels", False))
+            if not separate_channels:
+                gene_embedding_mat = pd.DataFrame(
+                    np.zeros((len(genes_to_keep), n_nmf_embeddings))
+                )
+                gene_embedding_mat.index = genes_to_keep
 
             for i, line in enumerate(f_in):
                 emb_source = line.rstrip()
                 print(emb_source)
+
+                if separate_channels:
+                    gene_embedding_mat = pd.DataFrame(
+                        np.zeros((len(genes_to_keep), n_nmf_embeddings))
+                    )
+                    gene_embedding_mat.index = genes_to_keep
 
                 # if extension is pkl then read embedding and compute PCA
                 if emb_source.split(".")[-1] == "pkl":
