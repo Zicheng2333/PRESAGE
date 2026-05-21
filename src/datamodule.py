@@ -1,4 +1,5 @@
 import gzip
+import hashlib
 import json
 import os
 import shutil
@@ -221,6 +222,9 @@ class scPerturbDataModule(pl.LightningDataModule):
         control_key="control",
         dataset_class=scPerturbData,
         data_dir="./data/",
+        disjoint_test_controls=False,
+        test_control_fraction=0.5,
+        control_split_seed=None,
     ):
         super().__init__()
         assert (
@@ -247,12 +251,97 @@ class scPerturbDataModule(pl.LightningDataModule):
         self.val_dataset: scPerturbData = None
         self.test_dataset: scPerturbData = None
         self.data_dir = data_dir
+        self.disjoint_test_controls = bool(disjoint_test_controls)
+        self.test_control_fraction = float(test_control_fraction)
+        self.control_split_seed = control_split_seed
+        self._control_split_cache = None
         os.makedirs(self.data_dir, exist_ok=True)
         os.makedirs(self.deg_dir, exist_ok=True)
 
         self._data_prepared = False
         self._data_setup = False
         self.X_train_pca = None
+
+    def _resolved_control_split_seed(self) -> int:
+        if self.control_split_seed is not None:
+            return int(self.control_split_seed)
+
+        token = getattr(self, "split_path", None)
+        if token is None:
+            token = f"{self.dataset}:{self.control_key}"
+
+        digest = hashlib.sha256(str(token).encode("utf-8")).hexdigest()
+        return int(digest[:8], 16)
+
+    def get_stage_control_indices(self, adata: AnnData):
+        if self._control_split_cache is not None:
+            return self._control_split_cache
+
+        control_indices = np.asarray(
+            adata.obs.index[adata.obs[self.perturb_field] == self.control_key]
+        )
+        if control_indices.size == 0:
+            raise ValueError(
+                f'No control cells found for key "{self.control_key}" in dataset "{self.dataset}".'
+            )
+
+        if not self.disjoint_test_controls:
+            self._control_split_cache = {
+                "fit": control_indices,
+                "test": control_indices,
+            }
+            return self._control_split_cache
+
+        if control_indices.size < 2:
+            raise ValueError(
+                "disjoint_test_controls=True requires at least 2 control cells."
+            )
+
+        if not (0.0 < self.test_control_fraction < 1.0):
+            raise ValueError(
+                f"test_control_fraction must be in (0, 1), got {self.test_control_fraction}."
+            )
+
+        rng = np.random.default_rng(self._resolved_control_split_seed())
+        shuffled = control_indices[rng.permutation(control_indices.size)]
+
+        n_test = int(round(control_indices.size * self.test_control_fraction))
+        n_test = min(max(n_test, 1), control_indices.size - 1)
+
+        test_controls = shuffled[:n_test]
+        fit_controls = shuffled[n_test:]
+
+        self._control_split_cache = {
+            "fit": fit_controls,
+            "test": test_controls,
+        }
+        print(
+            "Using disjoint control splits:",
+            f"fit={fit_controls.size}",
+            f"test={test_controls.size}",
+            f"seed={self._resolved_control_split_seed()}",
+        )
+        return self._control_split_cache
+
+    def get_stage_control_adata(self, adata: AnnData, stage: str) -> AnnData:
+        stage_controls = self.get_stage_control_indices(adata)
+        if stage not in stage_controls:
+            raise ValueError(
+                f'Unknown control split stage "{stage}". Expected one of {list(stage_controls)}.'
+            )
+        return adata[adata.obs.index.isin(stage_controls[stage])].copy()
+
+    def subset_with_stage_controls(
+        self, adata: AnnData, perturbations: List[str], stage: str
+    ) -> AnnData:
+        stage_controls = self.get_stage_control_indices(adata)
+        if stage not in stage_controls:
+            raise ValueError(
+                f'Unknown control split stage "{stage}". Expected one of {list(stage_controls)}.'
+            )
+        pert_mask = adata.obs[self.perturb_field].isin(perturbations)
+        ctrl_mask = adata.obs.index.isin(stage_controls[stage])
+        return adata[pert_mask | ctrl_mask].copy()
 
     @staticmethod
     def download(url, save_path) -> None:
@@ -492,9 +581,11 @@ class scPerturbDataModule(pl.LightningDataModule):
                         self,
                         f"{name}_dataset",
                         self.create_dataset(
-                            adata[
-                                adata.obs[self.perturb_field].isin(subset + ["control"])
-                            ],
+                            self.subset_with_stage_controls(
+                                adata,
+                                perturbations=subset,
+                                stage="fit",
+                            ),
                             train=(name == "train"),
                         ),
                     )
@@ -521,11 +612,11 @@ class scPerturbDataModule(pl.LightningDataModule):
                 print(5)
                 # train are added here so it computes the geometric eval on train
                 self.test_dataset = self.create_dataset(
-                    adata[
-                        adata.obs[self.perturb_field].isin(
-                            splits["test"] + ["control"] + splits["train"]
-                        )
-                    ],
+                    self.subset_with_stage_controls(
+                        adata,
+                        perturbations=splits["test"] + splits["train"],
+                        stage="test",
+                    ),
                     train=False,
                 )
 

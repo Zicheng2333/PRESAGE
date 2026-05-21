@@ -367,6 +367,28 @@ parser.add_argument(
     choices=["min", "max"],
     default=None,
 )
+parser.add_argument(
+    "--disjoint_test_controls",
+    action="store_true",
+    help="Use a control split so fit/validation and test do not share the same control cells.",
+)
+parser.add_argument(
+    "--test_control_fraction",
+    type=float,
+    default=0.5,
+    help="Fraction of control cells reserved for test when --disjoint_test_controls is enabled.",
+)
+parser.add_argument(
+    "--control_split_seed",
+    type=int,
+    default=None,
+    help="Optional integer seed for deterministic control splitting.",
+)
+parser.add_argument(
+    "--save_predictions",
+    action="store_true",
+    help="Save predictions_all_<dataset>.csv after testing. Disabled by default.",
+)
 parser.add_argument("--output_root", type=str, default="./experiment_runs")
 
 args = parser.parse_args()
@@ -428,6 +450,7 @@ if args.enhance_added_embeddings:
 
 optional_overrides = {
     "data.batch_size": args.batch_size,
+    "data.test_control_fraction": args.test_control_fraction,
     "model.lr": args.lr,
     "model.weight_decay": args.weight_decay,
     "model.optimizer": args.optimizer,
@@ -456,6 +479,10 @@ for key, value in optional_overrides.items():
     if value is not None:
         modify_config[key] = value
 
+if args.disjoint_test_controls:
+    modify_config["data.disjoint_test_controls"] = True
+if args.control_split_seed is not None:
+    modify_config["data.control_split_seed"] = args.control_split_seed
 if args.pathway_layer_norm is not None:
     modify_config["model.pathway_layer_norm"] = args.pathway_layer_norm
 if args.learn_source_scaling:
@@ -546,9 +573,12 @@ logger = pl.loggers.CSVLogger(
     version=seed.split('/')[-1].split('.json')[0]
 )
 
-print("default prediction file:", predictions_file)
-predictions_file = run_dir / f"predictions_all_{dataset}.csv"
-print("adjusted prediction file:", predictions_file)
+if args.save_predictions:
+    predictions_file = run_dir / f"predictions_all_{dataset}.csv"
+    print("prediction export enabled:", predictions_file)
+else:
+    predictions_file = None
+    print("prediction export disabled.")
 
 early_stop_callback = EarlyStopping(
     monitor=args.monitor_metric,
@@ -627,6 +657,9 @@ training_summary = {
     "enhance_added_embeddings": bool(args.enhance_added_embeddings),
     "use_old": bool(args.use_old),
     "eval_val_metrics": bool(model_config["eval_val_metrics"]),
+    "disjoint_test_controls": bool(args.disjoint_test_controls),
+    "test_control_fraction": float(args.test_control_fraction),
+    "save_predictions": bool(args.save_predictions),
 }
 training_summary_file = run_dir / "training_summary.json"
 with open(training_summary_file, "w") as f:
@@ -681,12 +714,13 @@ else:
             ).to_string(index=False)
         )
 
-dataloader = datamodule.test_dataloader()
-avg_predictions = get_predictions(
-    trainer, lightning_module, dataloader, datamodule.var_names
-)
-avg_predictions = avg_predictions.loc[
-    :, datamodule.train_dataset.adata.var.measured_gene
-]
-avg_predictions.to_csv(predictions_file)
-print("saved averaged predictions:", predictions_file)
+if args.save_predictions:
+    dataloader = datamodule.test_dataloader()
+    avg_predictions = get_predictions(
+        trainer, lightning_module, dataloader, datamodule.var_names
+    )
+    avg_predictions = avg_predictions.loc[
+        :, datamodule.train_dataset.adata.var.measured_gene
+    ]
+    avg_predictions.to_csv(predictions_file)
+    print("saved averaged predictions:", predictions_file)

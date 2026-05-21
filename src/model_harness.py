@@ -62,38 +62,33 @@ class ModelHarness(pl.LightningModule):
         datamodule.encoder = encoder
         self.do_test_eval = getattr(datamodule, "do_test_eval", True)
 
-        train_adata = datamodule.train_dataset.adata
-
-        ctrl_cells = train_adata[
-            train_adata.obs.loc[:, datamodule.perturb_field] == datamodule.control_key
-        ]
-
         train_keys = datamodule.splits["train"]
 
-        # ctrl keys used for sphering
+        full_adata = datamodule.load_preprocessed()
+        fit_ctrl_cells = self._get_stage_control_cells(datamodule, full_adata, "fit")
+        test_ctrl_cells = self._get_stage_control_cells(datamodule, full_adata, "test")
 
-        # 1 / 0
-        adata = datamodule.load_preprocessed()
-        adata.X = adata.X - np.mean(ctrl_cells.X, axis=0)
-
-        self.evaluator = Evaluator(
-            self.var_names,
-            self.degs,
-            ctrl_cells,
-            train_keys,
-            adata,
-            geneset_file=datamodule.gs_file,
-            # perturbation_cluster_file=datamodule.pclust_file,
-            ncells_per_perturbation_file=datamodule.ncells_per_perturbation_file,
-            dataset=datamodule.dataset,
-            seed=datamodule.seed,
+        self.evaluator = self._build_evaluator(
+            datamodule=datamodule,
+            ctrl_cells=fit_ctrl_cells,
+            train_keys=train_keys,
+            adata=full_adata,
         )
+        if getattr(datamodule, "disjoint_test_controls", False):
+            self.test_evaluator = self._build_evaluator(
+                datamodule=datamodule,
+                ctrl_cells=test_ctrl_cells,
+                train_keys=train_keys,
+                adata=full_adata,
+            )
+        else:
+            self.test_evaluator = self.evaluator
 
         if hasattr(datamodule, "degs_combo_deviation"):
             self.second_evaluator = Evaluator(
                 self.var_names,
                 datamodule.degs_combo_deviation,
-                ctrl_cells,
+                fit_ctrl_cells,
                 train_keys,
                 kvals=(10, 20, 40),
                 geneset_file=datamodule.gs_file,
@@ -117,6 +112,31 @@ class ModelHarness(pl.LightningModule):
         # these will be for piecing together all_embh and all_coef
         self.all_locs_gene = []
         self.all_locs_ind = []
+
+    def _get_stage_control_cells(self, datamodule, adata, stage):
+        if hasattr(datamodule, "get_stage_control_adata"):
+            return datamodule.get_stage_control_adata(adata, stage)
+
+        return adata[
+            adata.obs.loc[:, datamodule.perturb_field] == datamodule.control_key
+        ].copy()
+
+    def _build_evaluator(self, datamodule, ctrl_cells, train_keys, adata):
+        centered_adata = adata.copy()
+        centered_adata.X = centered_adata.X - np.mean(ctrl_cells.X, axis=0)
+
+        return Evaluator(
+            self.var_names,
+            self.degs,
+            ctrl_cells,
+            train_keys,
+            centered_adata,
+            geneset_file=datamodule.gs_file,
+            # perturbation_cluster_file=datamodule.pclust_file,
+            ncells_per_perturbation_file=datamodule.ncells_per_perturbation_file,
+            dataset=datamodule.dataset,
+            seed=datamodule.seed,
+        )
 
     def ind_to_pert(self, ind) -> str:
         if hasattr(ind, "numpy"):
@@ -296,10 +316,10 @@ class ModelHarness(pl.LightningModule):
                 # mean_preds[np.isnan(mean_preds)] = 0
 
                 if self.do_test_eval:
-                    eval_dict = self.evaluator(keys, mean_tgts, mean_preds, True)
+                    eval_dict = self.test_evaluator(keys, mean_tgts, mean_preds, True)
                     self.test_eval_results[current_test_set] = dict(eval_dict)
                     self.test_single_eval_results[current_test_set] = dict(
-                        self.evaluator.all_single_evals
+                        self.test_evaluator.all_single_evals
                     )
                     self.log_dict(prepend_to_keys(current_test_set, eval_dict))
                     if hasattr(self, "second_evaluator"):
@@ -314,10 +334,10 @@ class ModelHarness(pl.LightningModule):
                                 )
                             )
                 else:
-                    eval_dict = self.evaluator(keys, mean_tgts, mean_preds, False)
+                    eval_dict = self.test_evaluator(keys, mean_tgts, mean_preds, False)
                     self.test_eval_results[current_test_set] = dict(eval_dict)
                     self.test_single_eval_results[current_test_set] = dict(
-                        self.evaluator.all_single_evals
+                        self.test_evaluator.all_single_evals
                     )
                     self.log_dict(prepend_to_keys(current_test_set, eval_dict))
             self.test_step_outputs.clear()
