@@ -45,6 +45,8 @@ COMMON_ARGS=(
   --eval_val_metrics
   --monitor_metric val_balanced_top20
   --monitor_mode max
+  --disjoint_test_controls 
+  --control_split_seed 42
 )
 
 run_idx=0

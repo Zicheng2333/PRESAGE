@@ -42,6 +42,8 @@ COMMON_ARGS=(
   --pathway_dropout 0.10
   --source_dropout 0.10
   --pathway_layer_norm
+  --disjoint_test_controls 
+  --control_split_seed 42
 )
 
 run_idx=0

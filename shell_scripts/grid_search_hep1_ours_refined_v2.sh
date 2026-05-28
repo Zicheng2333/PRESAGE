@@ -43,6 +43,8 @@ COMMON_ARGS=(
   --eval_val_metrics
   --monitor_metric val_avg_cossim_top20_unionde
   --monitor_mode max
+  --disjoint_test_controls 
+  --control_split_seed 42
 )
 
 run_idx=0
